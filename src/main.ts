@@ -39,44 +39,56 @@ let ticks$ = Observable.interval(SPEED);
 let click$ = Observable.fromEvent(document, 'click');
 let keydown$ = Observable.fromEvent(document, 'keydown');
 
-let direction$ = keydown$
-  .map((event: KeyboardEvent) => DIRECTIONS[event.keyCode])
-  .filter(direction => !!direction)
-  .scan(nextDirection)
-  .startWith(INITIAL_DIRECTION)
-  .distinctUntilChanged();
+function createGame(fps$: Observable<number>): Observable<Scene> {
+  let direction$ = keydown$
+    .map((event: KeyboardEvent) => DIRECTIONS[event.keyCode])
+    .filter(direction => !!direction)
+    .scan(nextDirection)
+    .startWith(INITIAL_DIRECTION)
+    .distinctUntilChanged();
 
-let length$ = new BehaviorSubject<number>(SNAKE_LENGTH);
+  let length$ = new BehaviorSubject<number>(SNAKE_LENGTH);
 
-let snakeLength$ = length$
-  .scan((step, snakeLength) => snakeLength + step)
-  .share();
+  let snakeLength$ = length$
+    .scan((step, snakeLength) => snakeLength + step)
+    .share();
 
-let score$ = snakeLength$
-  .startWith(0)
-  .scan((score, _) => score + POINTS_PER_APPLE);
+  let score$ = snakeLength$
+    .startWith(0)
+    .scan((score, _) => score + POINTS_PER_APPLE);
 
-let snake$: Observable<Array<Point2D>> = ticks$
-  .withLatestFrom(direction$, snakeLength$, (_, direction, snakeLength) => [direction, snakeLength])
-  .scan(move, generateSnake())
-  .share();
+  let snake$: Observable<Array<Point2D>> = ticks$
+    .withLatestFrom(direction$, snakeLength$, (_, direction, snakeLength) => [direction, snakeLength])
+    .scan(move, generateSnake())
+    .share();
 
-let apples$ = snake$
-  .scan(eat, generateApples())
-  .distinctUntilChanged()
-  .share();
+  let apples$ = snake$
+    .scan(eat, generateApples())
+    .distinctUntilChanged()
+    .share();
 
-let appleEaten$ = apples$
-  .skip(1)
-  .do(() => length$.next(POINTS_PER_APPLE))
-  .subscribe();
+  let appleEaten$ = apples$
+    .skip(1)
+    .do(() => length$.next(POINTS_PER_APPLE))
+    .subscribe();
 
-let scene$ = Observable.combineLatest(snake$, apples$, score$, (snake, apples, score) => ({ snake, apples, score }));
+  let scene$ = Observable.combineLatest(snake$, apples$, score$, (snake, apples, score) => ({ snake, apples, score }));
 
-let game$ = Observable.interval(1000 / FPS, animationFrame)
-  .withLatestFrom(scene$, (_, scene) => scene)
-  .takeWhile(scene => !isGameOver(scene))
-  .subscribe({
-    next: (scene) => renderScene(ctx, scene),
-    complete: () => renderGameOver(ctx)
-  });
+  return fps$.withLatestFrom(scene$, (_, scene) => scene);
+}
+
+let game$ = Observable.of('Start Game')
+  .map(() => Observable.interval(1000 / FPS, animationFrame))
+  .switchMap(createGame)
+  .takeWhile(scene => !isGameOver(scene));
+
+const startGame = () => game$.subscribe({
+  next: (scene) => renderScene(ctx, scene),
+  complete: () => {
+    renderGameOver(ctx);
+
+    click$.first().subscribe(startGame);
+  }
+});
+
+startGame();
