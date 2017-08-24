@@ -5,6 +5,7 @@ import { animationFrame } from 'rxjs/scheduler/animationFrame';
 import { interval } from 'rxjs/observable/interval';
 import { fromEvent } from 'rxjs/observable/fromEvent';
 import { combineLatest } from 'rxjs/observable/combineLatest';
+import { of } from 'rxjs/observable/of';
 
 import {
   map,
@@ -16,7 +17,9 @@ import {
   withLatestFrom,
   tap,
   skip,
-  takeWhile
+  switchMap,
+  takeWhile,
+  first
 } from 'rxjs/operators';
 
 import { DIRECTIONS, SPEED, SNAKE_LENGTH, FPS, APPLE_COUNT, POINTS_PER_APPLE } from './constants';
@@ -59,49 +62,63 @@ let ticks$ = interval(SPEED);
 let click$ = fromEvent(document, 'click');
 let keydown$ = fromEvent(document, 'keydown');
 
-let direction$ = keydown$.pipe(
-  map((event: KeyboardEvent) => DIRECTIONS[event.keyCode]),
-  filter(direction => !!direction),
-  startWith(INITIAL_DIRECTION),
-  scan(nextDirection),
-  distinctUntilChanged()
-);
+function createGame(fps$: Observable<number>): Observable<Scene> {
 
-let length$ = new BehaviorSubject<number>(SNAKE_LENGTH);
+  let direction$ = keydown$.pipe(
+    map((event: KeyboardEvent) => DIRECTIONS[event.keyCode]),
+    filter(direction => !!direction),
+    startWith(INITIAL_DIRECTION),
+    scan(nextDirection),
+    distinctUntilChanged()
+  );
 
-let snakeLength$ = length$.pipe(
-  scan((step, snakeLength) => snakeLength + step),
-  share()
-);
+  let length$ = new BehaviorSubject<number>(SNAKE_LENGTH);
 
-let score$ = snakeLength$.pipe(
-  startWith(0),
-  scan((score, _) => score + POINTS_PER_APPLE),
-);
+  let snakeLength$ = length$.pipe(
+    scan((step, snakeLength) => snakeLength + step),
+    share()
+  );
 
-let snake$: Observable<Array<Point2D>> = ticks$.pipe(
-  withLatestFrom(direction$, snakeLength$, (_, direction, snakeLength) => [direction, snakeLength]),
-  scan(move, generateSnake()),
-  share()
-);
+  let score$ = snakeLength$.pipe(
+    startWith(0),
+    scan((score, _) => score + POINTS_PER_APPLE),
+  );
 
-let apples$ = snake$.pipe(
-  scan(eat, generateApples()),
-  distinctUntilChanged(),
-  share()
-);
+  let snake$: Observable<Array<Point2D>> = ticks$.pipe(
+    withLatestFrom(direction$, snakeLength$, (_, direction, snakeLength) => [direction, snakeLength]),
+    scan(move, generateSnake()),
+    share()
+  );
 
-let appleEaten$ = apples$.pipe(
-  skip(1),
-  tap(() => length$.next(POINTS_PER_APPLE))
-).subscribe();
+  let apples$ = snake$.pipe(
+    scan(eat, generateApples()),
+    distinctUntilChanged(),
+    share()
+  );
 
-let scene$: Observable<Scene> = combineLatest(snake$, apples$, score$, (snake, apples, score) => ({ snake, apples, score }));
+  let appleEaten$ = apples$.pipe(
+    skip(1),
+    tap(() => length$.next(POINTS_PER_APPLE))
+  ).subscribe();
 
-let game$ = interval(1000 / FPS, animationFrame).pipe(
-  withLatestFrom(scene$, (_, scene) => scene),
+  let scene$: Observable<Scene> = combineLatest(snake$, apples$, score$, (snake, apples, score) => ({ snake, apples, score }));
+
+  return fps$.pipe(withLatestFrom(scene$, (_, scene) => scene));
+}
+
+let game$ = of('Start Game').pipe(
+  map(() => interval(1000 / FPS, animationFrame)),
+  switchMap(createGame),
   takeWhile(scene => !isGameOver(scene))
-).subscribe({
+);
+
+const startGame = () => game$.subscribe({
   next: (scene) => renderScene(ctx, scene),
-  complete: () => renderGameOver(ctx)
+  complete: () => {
+    renderGameOver(ctx);
+
+    click$.pipe(first()).subscribe(startGame);
+  }
 });
+
+startGame();
