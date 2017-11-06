@@ -43,8 +43,8 @@ function createGame(fps$: Observable<number>): Observable<Scene> {
   let direction$ = keydown$
     .map((event: KeyboardEvent) => DIRECTIONS[event.keyCode])
     .filter(direction => !!direction)
-    .scan(nextDirection)
     .startWith(INITIAL_DIRECTION)
+    .scan(nextDirection)
     .distinctUntilChanged();
 
   let length$ = new BehaviorSubject<number>(SNAKE_LENGTH);
